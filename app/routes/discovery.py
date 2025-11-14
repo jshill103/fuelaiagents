@@ -131,9 +131,10 @@ def get_suggestions(max_suggestions: int = 15) -> Dict[str, List[Dict[str, Any]]
 
 
 @router.get("/ui", response_class=HTMLResponse)
-def discovery_ui(max_suggestions: int = 15):
+def discovery_ui():
     """
     Simple HTML UI to view suggested accounts and approve them.
+    Now loads instantly and fetches suggestions asynchronously.
     """
     brand_id = "4c91c352-66f0-4c50-8466-dbaf4dfbff04"
 
@@ -155,69 +156,19 @@ def discovery_ui(max_suggestions: int = 15):
         return HTMLResponse("<h1>No brand found</h1>")
 
     brand_name = row[0]
-    existing_handles = _get_existing_handles_for_brand(brand_id)
 
-    brand_description = (
-        "AI that runs outbound and follow-ups for sales teams, acting like a human SDR "
-        "that never gets tired."
-    )
-
-    target_audience = (
-        "B2B SaaS founders, sales leaders, SDR/BDR managers, and RevOps leaders."
-    )
-
-    suggestions = suggest_accounts_for_brand(
-        brand_name=brand_name,
-        brand_description=brand_description,
-        target_audience=target_audience,
-        existing_handles=existing_handles,
-        max_suggestions=max_suggestions,
-    )
-
-    # Build table rows
-    rows_html = ""
-    for i, s in enumerate(suggestions, start=1):
-        platform = s["platform"]
-        if platform == "instagram":
-            plat_badge = '<span class="badge badge-ig">Instagram</span>'
-        elif platform == "facebook":
-            plat_badge = '<span class="badge badge-fb">Facebook</span>'
-        else:
-            plat_badge = '<span class="badge badge-li">LinkedIn</span>'
-
-        type_label = s.get("type", "inspiration")
-        type_label_pretty = type_label.capitalize()
-        type_pill = f'<span class="type-pill">{type_label_pretty}</span>'
-
-        fit_score = s.get("fit_score", 0.0)
-        fit_display = f"{fit_score:.0f}%"
-
-        reason = s.get("reason", "")
-        voice_notes = s.get("voice_notes", "")
-
-        reason_cell = reason
-        if voice_notes:
-            reason_cell += (
-                f'<div class="voice-notes"><strong>Voice to borrow:</strong> '
-                f'{voice_notes}</div>'
-            )
-
-        rows_html += f"""
-        <tr id="row-{i}">
-          <td>{i}</td>
-          <td>{plat_badge}</td>
-          <td>{s['handle']}</td>
-          <td>{s.get('display_name','')}</td>
-          <td>{type_pill}</td>
-          <td class="fit-score">{fit_display}</td>
-          <td>{reason_cell}</td>
-          <td>
-            <button onclick="approve('{s['platform']}', '{s['handle']}', {str(type_label=='competitor').lower()}, 'row-{i}')">
-              Approve
-            </button>
-          </td>
-        </tr>
-        """
+    # Don't fetch suggestions here - do it async via JavaScript for instant page load
+    rows_html = """
+    <tr id="loading-row">
+        <td colspan="8" style="text-align:center; padding:40px;">
+            <div class="loading-spinner"></div>
+            <div style="margin-top:16px; color:#6b7280;">
+                🤖 AI is analyzing your audience and finding relevant accounts...<br>
+                <small>This takes 5-10 seconds</small>
+            </div>
+        </td>
+    </tr>
+    """
 
     html = f"""
     <!DOCTYPE html>
@@ -346,8 +297,89 @@ def discovery_ui(max_suggestions: int = 15):
           font-size: 11px;
           color: var(--text-muted);
         }}
+        .loading-spinner {{
+          width: 40px;
+          height: 40px;
+          margin: 0 auto;
+          border: 4px solid var(--border-subtle);
+          border-top-color: var(--brand-blue);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }}
+        @keyframes spin {{
+          to {{ transform: rotate(360deg); }}
+        }}
       </style>
       <script>
+        // Load suggestions asynchronously when page loads
+        async function loadSuggestions() {{
+          try {{
+            const resp = await fetch("/discovery/suggestions?max_suggestions=15");
+            
+            if (!resp.ok) {{
+              throw new Error("Failed to fetch suggestions");
+            }}
+            
+            const data = await resp.json();
+            const suggestions = data.suggestions || [];
+            
+            const tbody = document.querySelector("tbody");
+            
+            if (suggestions.length === 0) {{
+              tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#6b7280;">No suggestions found. Try again later.</td></tr>';
+              return;
+            }}
+            
+            // Build table rows
+            let html = '';
+            suggestions.forEach((s, idx) => {{
+              const i = idx + 1;
+              let platBadge = '';
+              if (s.platform === 'instagram') {{
+                platBadge = '<span class="badge badge-ig">Instagram</span>';
+              }} else if (s.platform === 'facebook') {{
+                platBadge = '<span class="badge badge-fb">Facebook</span>';
+              }} else {{
+                platBadge = '<span class="badge badge-li">LinkedIn</span>';
+              }}
+              
+              const typeLabel = (s.type || 'inspiration').charAt(0).toUpperCase() + (s.type || 'inspiration').slice(1);
+              const fitScore = Math.round(s.fit_score || 0);
+              
+              let reasonCell = s.reason || '';
+              if (s.voice_notes) {{
+                reasonCell += '<div class="voice-notes"><strong>Voice to borrow:</strong> ' + s.voice_notes + '</div>';
+              }}
+              
+              const isCompetitor = s.type === 'competitor' ? 'true' : 'false';
+              
+              html += `
+                <tr id="row-${{i}}">
+                  <td>${{i}}</td>
+                  <td>${{platBadge}}</td>
+                  <td>${{s.handle}}</td>
+                  <td>${{s.display_name || ''}}</td>
+                  <td><span class="type-pill">${{typeLabel}}</span></td>
+                  <td class="fit-score">${{fitScore}}%</td>
+                  <td>${{reasonCell}}</td>
+                  <td>
+                    <button onclick="approve('${{s.platform}}', '${{s.handle}}', ${{isCompetitor}}, 'row-${{i}}')">
+                      Approve
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }});
+            
+            tbody.innerHTML = html;
+            
+          }} catch (err) {{
+            console.error(err);
+            document.querySelector("tbody").innerHTML = 
+              '<tr><td colspan="8" style="text-align:center;padding:40px;color:#ef4444;">Error loading suggestions. Please refresh the page.</td></tr>';
+          }}
+        }}
+        
         async function approve(platform, handle, isCompetitor, rowId) {{
           const payload = {{
             platform: platform,
@@ -387,6 +419,9 @@ def discovery_ui(max_suggestions: int = 15):
             alert("Network error approving source");
           }}
         }}
+        
+        // Load suggestions when page loads
+        window.addEventListener('DOMContentLoaded', loadSuggestions);
       </script>
     </head>
     <body>
