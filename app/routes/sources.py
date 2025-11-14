@@ -39,3 +39,41 @@ def create_source_route(body: SourceCreateRequest):
 @router.get("", response_model=List[Dict[str, Any]])
 def list_sources_route():
     return list_sources()
+
+
+@router.delete("/{source_id}")
+def delete_source_route(source_id: str):
+    """
+    Delete a source and all its associated posts.
+    """
+    import psycopg2
+    
+    conn = psycopg2.connect(
+        host="localhost",
+        port=5432,
+        dbname="asa",
+        user="postgres",
+        password="postgres",
+    )
+    cur = conn.cursor()
+    
+    # Check if source exists
+    cur.execute("SELECT handle FROM sources WHERE id = %s", (source_id,))
+    row = cur.fetchone()
+    
+    if not row:
+        cur.close()
+        conn.close()
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Source not found")
+    
+    handle = row[0]
+    
+    # Delete source (cascade will delete posts)
+    cur.execute("DELETE FROM sources WHERE id = %s", (source_id,))
+    conn.commit()
+    
+    cur.close()
+    conn.close()
+    
+    return {"success": True, "deleted_handle": handle}
