@@ -1,0 +1,19 @@
+# Python env
+.venv/
+__pycache__/
+
+# Data
+data/raw/*
+data/tmp/*
+*.csv
+*.json
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Env files
+.env
+.env.*
