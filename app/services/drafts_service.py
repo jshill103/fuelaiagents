@@ -1,17 +1,8 @@
 # app/services/drafts_service.py
 
 from typing import Dict, Any, List
-import psycopg2
 
-
-def _get_db_conn():
-    return psycopg2.connect(
-        host="localhost",
-        port=5432,
-        dbname="asa",
-        user="postgres",
-        password="postgres",
-    )
+from app.db.connection import get_db_cursor
 
 
 def save_draft(brand_id: str, package: Dict[str, Any]) -> List[str]:
@@ -31,52 +22,47 @@ def save_draft(brand_id: str, package: Dict[str, Any]) -> List[str]:
 
     Returns a list of the created draft IDs (as strings).
     """
-    conn = _get_db_conn()
-    cur = conn.cursor()
-
     created_ids: List[str] = []
 
     core = package.get("core", {})
     core_style = core.get("style", "unspecified")
 
-    for platform in ("instagram", "facebook", "linkedin"):
-        section = package.get(platform, {}) or {}
+    with get_db_cursor() as cur:
+        for platform in ("instagram", "facebook", "linkedin"):
+            section = package.get(platform, {}) or {}
 
-        caption = section.get("caption", "")
-        hashtags = section.get("hashtags", []) or []
-        style = section.get("style") or core_style or "unspecified"
+            caption = section.get("caption", "")
+            hashtags = section.get("hashtags", []) or []
+            style = section.get("style") or core_style or "unspecified"
 
-        # Ensure hashtags is a Python list of strings
-        if not isinstance(hashtags, list):
-            hashtags = [str(hashtags)]
+            # Ensure hashtags is a Python list of strings
+            if not isinstance(hashtags, list):
+                hashtags = [str(hashtags)]
 
-        cur.execute(
-            """
-            insert into drafts (
-              brand_id,
-              platform,
-              type,
-              caption,
-              hashtags,
-              asset_refs
+            cur.execute(
+                """
+                insert into drafts (
+                  brand_id,
+                  platform,
+                  type,
+                  caption,
+                  hashtags,
+                  asset_refs
+                )
+                values (%s, %s, %s, %s, %s, %s)
+                returning id
+                """,
+                (
+                    brand_id,
+                    platform,
+                    style,
+                    caption,
+                    hashtags,   # psycopg2 will adapt Python list -> text[]
+                    [],         # asset_refs empty for now
+                ),
             )
-            values (%s, %s, %s, %s, %s, %s)
-            returning id
-            """,
-            (
-                brand_id,
-                platform,
-                style,
-                caption,
-                hashtags,   # psycopg2 will adapt Python list -> text[]
-                [],         # asset_refs empty for now
-            ),
-        )
 
-        draft_id = cur.fetchone()[0]
-        created_ids.append(str(draft_id))
+            draft_id = cur.fetchone()[0]
+            created_ids.append(str(draft_id))
 
-    conn.commit()
-    cur.close()
-    conn.close()
     return created_ids

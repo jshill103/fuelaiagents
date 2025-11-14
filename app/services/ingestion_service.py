@@ -4,24 +4,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 import json
 
-import psycopg2
-
-
-def _get_db_conn():
-    """
-    Open a connection to the asa Postgres DB.
-
-    This matches how the rest of your app connects:
-    host=localhost, port=5432, dbname=asa, user=postgres, password=postgres
-    (all inside Docker).
-    """
-    return psycopg2.connect(
-        host="localhost",
-        port=5432,
-        dbname="asa",
-        user="postgres",
-        password="postgres",
-    )
+from app.db.connection import get_db_cursor
 
 
 def _parse_iso_datetime(value: Any) -> Optional[datetime]:
@@ -82,70 +65,64 @@ def upsert_posts(
     if not posts:
         return
 
-    conn = _get_db_conn()
-    cur = conn.cursor()
+    with get_db_cursor() as cur:
+        for post in posts:
+            post_id = str(post.get("post_id") or "").strip()
+            if not post_id:
+                # no usable ID, skip this entry
+                continue
 
-    for post in posts:
-        post_id = str(post.get("post_id") or "").strip()
-        if not post_id:
-            # no usable ID, skip this entry
-            continue
+            caption = post.get("caption") or ""
 
-        caption = post.get("caption") or ""
+            # Normalize hashtags to a list[str]
+            hashtags = post.get("hashtags") or []
+            if isinstance(hashtags, str):
+                # if someone passes "#a #b #c" as a string, split on whitespace
+                hashtags = [h.lstrip("#") for h in hashtags.split() if h.strip()]
+            elif isinstance(hashtags, list):
+                hashtags = [str(h).lstrip("#") for h in hashtags]
+            else:
+                hashtags = []
 
-        # Normalize hashtags to a list[str]
-        hashtags = post.get("hashtags") or []
-        if isinstance(hashtags, str):
-            # if someone passes "#a #b #c" as a string, split on whitespace
-            hashtags = [h.lstrip("#") for h in hashtags.split() if h.strip()]
-        elif isinstance(hashtags, list):
-            hashtags = [str(h).lstrip("#") for h in hashtags]
-        else:
-            hashtags = []
+            # Normalize media_urls to a list[str]
+            media_urls = post.get("media_urls") or []
+            if isinstance(media_urls, str):
+                media_urls = [media_urls]
+            elif isinstance(media_urls, list):
+                media_urls = [str(u) for u in media_urls]
+            else:
+                media_urls = []
 
-        # Normalize media_urls to a list[str]
-        media_urls = post.get("media_urls") or []
-        if isinstance(media_urls, str):
-            media_urls = [media_urls]
-        elif isinstance(media_urls, list):
-            media_urls = [str(u) for u in media_urls]
-        else:
-            media_urls = []
+            posted_at = _parse_iso_datetime(post.get("posted_at"))
 
-        posted_at = _parse_iso_datetime(post.get("posted_at"))
+            engagement = post.get("engagement") or {}
+            if not isinstance(engagement, dict):
+                engagement = {}
 
-        engagement = post.get("engagement") or {}
-        if not isinstance(engagement, dict):
-            engagement = {}
-
-        # Insert into posts_raw using only existing columns
-        cur.execute(
-    """
-    INSERT INTO posts_raw (
-        source_id,
-        platform,
-        post_id,
-        caption,
-        hashtags,
-        media_urls,
-        posted_at,
-        engagement
-    )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (source_id, platform, post_id) DO NOTHING
-    """,
-    (
-        source_id,
-        platform,
-        post_id,
-        caption,
-        hashtags,
-        media_urls,
-        posted_at,
-        json.dumps(engagement),
-    ),
-)
-
-    conn.commit()
-    cur.close()
-    conn.close()
+            # Insert into posts_raw using only existing columns
+            cur.execute(
+                """
+                INSERT INTO posts_raw (
+                    source_id,
+                    platform,
+                    post_id,
+                    caption,
+                    hashtags,
+                    media_urls,
+                    posted_at,
+                    engagement
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (source_id, platform, post_id) DO NOTHING
+                """,
+                (
+                    source_id,
+                    platform,
+                    post_id,
+                    caption,
+                    hashtags,
+                    media_urls,
+                    posted_at,
+                    json.dumps(engagement),
+                ),
+            )

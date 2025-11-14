@@ -1,10 +1,10 @@
 # app/routes/sources.py
 
 from typing import Dict, Any, List
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.sources_service import create_source, list_sources
+from app.services.sources_service import create_source, list_sources, delete_source
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
@@ -46,34 +46,7 @@ def delete_source_route(source_id: str):
     """
     Delete a source and all its associated posts.
     """
-    import psycopg2
-    
-    conn = psycopg2.connect(
-        host="localhost",
-        port=5432,
-        dbname="asa",
-        user="postgres",
-        password="postgres",
-    )
-    cur = conn.cursor()
-    
-    # Check if source exists
-    cur.execute("SELECT handle FROM sources WHERE id = %s", (source_id,))
-    row = cur.fetchone()
-    
-    if not row:
-        cur.close()
-        conn.close()
-        from fastapi import HTTPException
+    result = delete_source(source_id)
+    if not result:
         raise HTTPException(status_code=404, detail="Source not found")
-    
-    handle = row[0]
-    
-    # Delete source (cascade will delete posts)
-    cur.execute("DELETE FROM sources WHERE id = %s", (source_id,))
-    conn.commit()
-    
-    cur.close()
-    conn.close()
-    
-    return {"success": True, "deleted_handle": handle}
+    return {"success": True, "deleted_handle": result}

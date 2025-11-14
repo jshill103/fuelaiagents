@@ -38,8 +38,8 @@ def dashboard_home():
             s.last_crawl_at,
             COUNT(DISTINCT p.id) as post_count,
             MAX(p.posted_at) as latest_post,
-            SUM((p.engagement->>'likes')::int) as total_likes,
-            SUM((p.engagement->>'comments')::int) as total_comments
+            COALESCE(SUM((p.engagement->>'likes')::int), 0) as total_likes,
+            COALESCE(SUM((p.engagement->>'comments')::int), 0) as total_comments
         FROM sources s
         LEFT JOIN posts_raw p ON p.source_id = s.id
         GROUP BY s.id, s.platform, s.handle, s.is_competitor, s.fetch_schedule, s.last_crawl_at
@@ -558,22 +558,21 @@ async def fetch_source_posts(source_id: str):
     """
     from app.services.instagram_scraper import fetch_instagram_posts
     from app.services.ingestion_service import upsert_posts
-    
-    conn = _get_db_conn()
-    cur = conn.cursor()
+    from app.db.connection import get_db_cursor
     
     # Get source details
-    cur.execute("""
-        SELECT platform, handle
-        FROM sources
-        WHERE id = %s
-    """, (source_id,))
-    
-    row = cur.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Source not found")
-    
-    platform, handle = row
+    with get_db_cursor() as cur:
+        cur.execute("""
+            SELECT platform, handle
+            FROM sources
+            WHERE id = %s
+        """, (source_id,))
+        
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Source not found")
+        
+        platform, handle = row
     
     if platform != "instagram":
         raise HTTPException(status_code=400, detail="Only Instagram supported for now")
@@ -590,15 +589,12 @@ async def fetch_source_posts(source_id: str):
         )
         
         # Update last_crawl_at
-        cur.execute("""
-            UPDATE sources
-            SET last_crawl_at = NOW()
-            WHERE id = %s
-        """, (source_id,))
-        conn.commit()
-        
-        cur.close()
-        conn.close()
+        with get_db_cursor() as cur:
+            cur.execute("""
+                UPDATE sources
+                SET last_crawl_at = NOW()
+                WHERE id = %s
+            """, (source_id,))
         
         return {
             "success": True,
@@ -607,8 +603,6 @@ async def fetch_source_posts(source_id: str):
         }
         
     except Exception as e:
-        cur.close()
-        conn.close()
         raise HTTPException(status_code=500, detail=str(e))
 
 
